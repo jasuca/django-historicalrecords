@@ -48,6 +48,27 @@ class HistoricalRecords(object):
                 # The historical model gets its own AutoField, so any
                 # existing one must be replaced with an IntegerField.
                 field.__class__ = models.IntegerField
+
+            # Retain ForeignKey relationships with a reasonable related_name,
+            # fixing a syncdb issue.
+            #
+            # class NonVersioned(models.Model):
+            #    pass
+            #
+            # class Versioned(models.Model):
+            #    name = models.CharField(max_length=255)
+            #    nv = models.ForeignKey('NonVersioned', related_name='vs')
+            #    history = HistoricalRecords()
+            #
+            # >>> nv = NonVersioned.objects.create()
+            # >>> v = Versioned.objects.create(name='test', nv=nv)
+            # >>> v.history.all()[0].nv  <- same as nv above
+            # >>> nv.vs                  <- [v]
+            # >>> nv.vs_historical       <- same as v.history.all()
+            if isinstance(field, models.ForeignKey):
+                rel = copy.copy(field.rel)
+                rel.related_name = rel.related_name + '_historical'
+                field.rel = rel
             
             if field.primary_key or field.unique:
                 # Unique fields can no longer be guaranteed unique,
