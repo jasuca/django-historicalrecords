@@ -67,7 +67,8 @@ class HistoricalRecords(object):
             # >>> nv.vs_historical       <- same as v.history.all()
             if isinstance(field, models.ForeignKey):
                 rel = copy.copy(field.rel)
-                rel.related_name = rel.related_name + '_historical'
+                related_name = rel.related_name or field.opts.object_name.lower()
+                rel.related_name = related_name + '_historical'
                 field.rel = rel
             
             if field.primary_key or field.unique:
