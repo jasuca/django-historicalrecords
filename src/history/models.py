@@ -5,7 +5,16 @@ from django.db import models
 
 from history import manager
 
-class HistoricalRecords(object):
+
+# Behaviors for foreign key conversion.
+PRESERVE = 1
+CONVERT = 2
+
+class HistoricalRecords(object):    
+
+    def __init__(self, key_conversions=None):
+        self.key_conversions = key_conversions or {}
+
     def contribute_to_class(self, cls, name):
         self.manager_name = name
         models.signals.class_prepared.connect(self.finalize, sender=cls)
@@ -49,27 +58,27 @@ class HistoricalRecords(object):
                 # existing one must be replaced with an IntegerField.
                 field.__class__ = models.IntegerField
 
-            # Retain ForeignKey relationships with a reasonable related_name,
-            # fixing a syncdb issue.
-            #
-            # class NonVersioned(models.Model):
-            #    pass
-            #
-            # class Versioned(models.Model):
-            #    name = models.CharField(max_length=255)
-            #    nv = models.ForeignKey('NonVersioned', related_name='vs')
-            #    history = HistoricalRecords()
-            #
-            # >>> nv = NonVersioned.objects.create()
-            # >>> v = Versioned.objects.create(name='test', nv=nv)
-            # >>> v.history.all()[0].nv  <- same as nv above
-            # >>> nv.vs                  <- [v]
-            # >>> nv.vs_historical       <- same as v.history.all()
+            # Deal with foreign keys, optionally according to a configured
+            # behavior scheme.
             if isinstance(field, models.ForeignKey):
-                rel = copy.copy(field.rel)
-                related_name = rel.related_name or field.opts.object_name.lower()
-                rel.related_name = related_name + '_historical'
-                field.rel = rel
+                conversion = self.key_conversions.get(field.name)
+                if conversion == CONVERT:
+                    # Convert the ForeignKey to a plain primary key field
+                    options = {
+                      'null': field.null,
+                      'blank': field.blank,
+                      'name': field.get_attname(),
+                    }
+                    field = copy.copy(field.rel.to._meta.pk)
+                    [setattr(field, key, options[key]) for key in options]
+
+                else: # PRESERVE
+                    # Preserve ForeignKey relationships with a reasonable 
+                    # related_name, fixing a syncdb issue.
+                    rel = copy.copy(field.rel)
+                    related_name = rel.related_name or field.opts.object_name.lower()
+                    rel.related_name = related_name + '_historical'
+                    field.rel = rel
             
             if field.primary_key or field.unique:
                 # Unique fields can no longer be guaranteed unique,
