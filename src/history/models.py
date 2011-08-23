@@ -2,9 +2,9 @@ import copy
 import datetime
 
 from django.db import models
+from django.db.models.fields.related import add_lazy_relation, RelatedField
 
 from history import manager
-
 
 # Behaviors for foreign key conversion.
 PRESERVE = 1
@@ -19,9 +19,15 @@ class HistoricalRecords(object):
         self.manager_name = name
         models.signals.class_prepared.connect(self.finalize, sender=cls)
 
-    def finalize(self, sender, **kwargs):
-        history_model = self.create_history_model(sender)
+    def get_field_dependencies(self, model):
+        deps = []
+        for field in model._meta.fields: 
+            if isinstance(field, models.ForeignKey):
+                deps.append(field)
+        return deps
 
+    def finalize(self, sender, **kwargs):
+        
         # The HistoricalRecords object will be discarded,
         # so the signal handlers can't use weak references.
         models.signals.post_save.connect(self.post_save, sender=sender,
@@ -29,8 +35,17 @@ class HistoricalRecords(object):
         models.signals.post_delete.connect(self.post_delete, sender=sender,
                                            weak=False)
 
-        descriptor = manager.HistoryDescriptor(history_model)
-        setattr(sender, self.manager_name, descriptor)
+        deps = self.get_field_dependencies(sender)
+        count = [len(deps)] 
+        def dependency_resolved(field, model, cls):
+            count[0] = count[0] - 1
+            if count[0] == 0:
+                history_model = self.create_history_model(sender)
+                descriptor = manager.HistoryDescriptor(history_model)
+                setattr(sender, self.manager_name, descriptor)
+
+        for dep in deps:
+            add_lazy_relation(sender, None, dep.rel.to, dependency_resolved)
 
     def create_history_model(self, model):
         """
@@ -53,11 +68,7 @@ class HistoricalRecords(object):
 
         for field in model._meta.fields:
             field = copy.copy(field)
-            if isinstance(field, models.AutoField):
-                # The historical model gets its own AutoField, so any
-                # existing one must be replaced with an IntegerField.
-                field.__class__ = models.IntegerField
-
+            
             # Deal with foreign keys, optionally according to a configured
             # behavior scheme.
             if isinstance(field, models.ForeignKey):
@@ -80,6 +91,11 @@ class HistoricalRecords(object):
                     rel.related_name = related_name + '_historical'
                     field.rel = rel
             
+            if isinstance(field, models.AutoField):
+                # The historical model gets its own AutoField, so any
+                # existing one must be replaced with an IntegerField.
+                field.__class__ = models.IntegerField
+
             if field.primary_key or field.unique:
                 # Unique fields can no longer be guaranteed unique,
                 # but they should still be indexed for faster lookups.
