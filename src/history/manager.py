@@ -22,6 +22,16 @@ class HistoryManager(models.Manager):
         filter = {self.instance._meta.pk.name: self.instance.pk}
         return super(HistoryManager, self).get_query_set().filter(**filter)
 
+    def annotated(self):
+        '''
+        Annotate the queryset with created_date, last_modified_date, and
+        count information, which can then be used in further filters.
+        '''
+        return self\
+            .annotate(created_date=models.Min('history__history_date'))\
+            .annotate(last_modified_date=models.Max('history__history_date'))\
+            .annotate(count=models.Count('history'))
+
     def most_recent(self):
         """
         Returns the most recent copy of the instance available in the history.
@@ -56,3 +66,19 @@ class HistoryManager(models.Manager):
             raise self.instance.DoesNotExist("%s had already been deleted." % \
                                              self.instance._meta.object_name)
         return self.instance.__class__(*values[1:])
+
+    @property
+    def created_date(self):
+        if not self.instance:
+            raise TypeError("Can't use created_date() without a %s instance." %\
+                                self.instance._meta.object_name)
+        return self.aggregate(created=models.Min('history_date'))['created']
+
+    @property
+    def last_modified_date(self):
+        if not self.instance:
+            raise TypeError("Can't use last_modified_date() without a %s instance." %\
+                                self.instance._meta.object_name)
+        return self.aggregate(modified=models.Max('history_date'))['modified']
+                              
+        

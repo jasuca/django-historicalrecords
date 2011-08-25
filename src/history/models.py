@@ -16,13 +16,30 @@ class HistoricalRecords(object):
 
     PATCHED_META_CLASSES = {}
 
-    def __init__(self, key_conversions=None):
+    def __init__(self, key_conversions=None
+                 add_history_properties=False):
         self.key_conversions = key_conversions or {}
+        self.add_history_properties = add_history_properties
 
     def contribute_to_class(self, cls, name):
         self.manager_name = name
         models.signals.class_prepared.connect(self.finalize, sender=cls)
         self.monkey_patch_name_map(cls, name)
+
+        if self.add_history_properties:
+            self.monkey_patch_history_properties(cls, name)
+
+    def monkey_patch_history_properties(self, cls, name):
+        '''
+        Add 'created_date' and 'last_modified_date' properties to the model
+        we're managing history for, calling the underlying manager to get the 
+        values.
+        '''
+        created_date = lambda m: getattr(m, name).created_date
+        cls.created_date = property(_created_date)
+
+        last_modified_date = lambda m: getattr(m, name).last_modified_date
+        cls.last_modified_date = property(_last_modified_date)
 
     def monkey_patch_name_map(self, cls, name):
         '''
