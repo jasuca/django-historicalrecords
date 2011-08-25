@@ -22,16 +22,6 @@ class HistoryManager(models.Manager):
         filter = {self.instance._meta.pk.name: self.instance.pk}
         return super(HistoryManager, self).get_query_set().filter(**filter)
 
-    def annotated(self):
-        '''
-        Annotate the queryset with created_date, last_modified_date, and
-        count information, which can then be used in further filters.
-        '''
-        return self\
-            .annotate(created_date=models.Min('history__history_date'))\
-            .annotate(last_modified_date=models.Max('history__history_date'))\
-            .annotate(count=models.Count('history'))
-
     def most_recent(self):
         """
         Returns the most recent copy of the instance available in the history.
@@ -81,4 +71,18 @@ class HistoryManager(models.Manager):
                                 self.instance._meta.object_name)
         return self.aggregate(modified=models.Max('history_date'))['modified']
                               
-        
+
+class HistoricalAnnotatingManager(models.Manager):
+
+    def get_query_set(self):
+        '''
+        Annotate the queryset with historical information:
+         - created_date - the history_date of the earliest version
+         - last_modified_date - the history_date of the most recent version
+         - count - the number of historical versions
+        '''
+        return super(HistoricalAnnotatingManager, self)\
+            .get_query_set()\
+            .annotate(created_date=models.Min('history__history_date'))\
+            .annotate(last_modified_date=models.Max('history__history_date'))\
+            .annotate(count=models.Count('history'))

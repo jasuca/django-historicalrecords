@@ -16,7 +16,7 @@ class HistoricalRecords(object):
 
     PATCHED_META_CLASSES = {}
 
-    def __init__(self, key_conversions=None
+    def __init__(self, key_conversions=None,
                  add_history_properties=False):
         self.key_conversions = key_conversions or {}
         self.add_history_properties = add_history_properties
@@ -63,11 +63,15 @@ class HistoricalRecords(object):
         original_init_name_map = cls._meta.__class__.init_name_map
         def init_name_map(meta):
             original_map = original_init_name_map(meta)
-            updated_map = self.update_item_name_map(original_map, cls, name)
 
-            if original_map != updated_map and app_cache_ready():
-                meta._name_map = updated_map
-            return updated_map
+            # only patch after app cache has been prepared
+            if app_cache_ready():
+                updated_map = self.update_item_name_map(original_map, cls, name)
+                if original_map != updated_map:
+                    meta._name_map = updated_map
+                return updated_map
+            else:
+                return original_map
         cls._meta.__class__.init_name_map = init_name_map
         
         # keep track of the fact that we patched this so we don't patch
@@ -77,10 +81,11 @@ class HistoricalRecords(object):
     def update_item_name_map(self, map, cls, name):
 
         # inject additional lookup into item name map
+        history_model = getattr(cls, name).model
         history_fk = models.ForeignKey(cls)
         history_fk.column = cls._meta.pk.get_attname()
-        history_fk.model = cls.history.model
-        rel = RelatedObject(cls, cls.history.model, history_fk)
+        history_fk.model = history_model
+        rel = RelatedObject(cls, history_model, history_fk)
 
         m = dict(map)
         m[name] = (rel, None, False, False)
