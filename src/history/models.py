@@ -3,6 +3,8 @@ import datetime
 
 from django.db import models
 from django.db.models.fields.related import add_lazy_relation, RelatedField
+from django.db.models.loading import app_cache_ready
+from django.db.models.related import RelatedObject
 
 from history import manager
 
@@ -10,7 +12,9 @@ from history import manager
 PRESERVE = 1
 CONVERT = 2
 
-class HistoricalRecords(object):    
+class HistoricalRecords(object):
+
+    PATCHED_META_CLASSES = {}
 
     def __init__(self, key_conversions=None):
         self.key_conversions = key_conversions or {}
@@ -18,6 +22,52 @@ class HistoricalRecords(object):
     def contribute_to_class(self, cls, name):
         self.manager_name = name
         models.signals.class_prepared.connect(self.finalize, sender=cls)
+        self.monkey_patch_name_map(cls, name)
+
+    def monkey_patch_name_map(self, cls, name):
+        '''
+        Replace init_name_map() with a custom implementation, allowing us to
+        trick Django into recognizing a phantom history relation that can
+        be used in chained filters, annotations, etc.
+
+        Examples:
+
+        # Annotate the Foo results with a 'history_length' containing the
+        # number of versions in each object's history
+        >>> Foo.objects.annotate(history_length=Count('history'))
+
+        # Get a list of Bar objects whose 'value' property has been over 9000
+        # at some point in time.
+        >>> Bar.objects.filter(history__value__gt=9000)
+        '''
+        if cls._meta.__class__ in self.PATCHED_META_CLASSES:
+            return
+
+        original_init_name_map = cls._meta.__class__.init_name_map
+        def init_name_map(meta):
+            original_map = original_init_name_map(meta)
+            updated_map = self.update_item_name_map(original_map, cls, name)
+
+            if original_map != updated_map and app_cache_ready():
+                meta._name_map = updated_map
+            return updated_map
+        cls._meta.__class__.init_name_map = init_name_map
+        
+        # keep track of the fact that we patched this so we don't patch
+        # it multiple times
+        self.PATCHED_META_CLASSES[cls._meta.__class__] = True
+
+    def update_item_name_map(self, map, cls, name):
+
+        # inject additional lookup into item name map
+        history_fk = models.ForeignKey(cls)
+        history_fk.column = cls._meta.pk.get_attname()
+        history_fk.model = cls.history.model
+        rel = RelatedObject(cls, cls.history.model, history_fk)
+
+        m = dict(map)
+        m[name] = (rel, None, False, False)
+        return m
 
     def get_field_dependencies(self, model):
         deps = []
