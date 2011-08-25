@@ -181,7 +181,8 @@ class HistoricalRecords(object):
         rel_nm = '_%s_history' % model._meta.object_name.lower()
         return {
             'history_id': models.AutoField(primary_key=True),
-            'history_date': models.DateTimeField(default=datetime.datetime.now),
+            'history_date': models.DateTimeField(default=datetime.datetime.now,
+                                                 db_index=True),
             'history_type': models.CharField(max_length=1, choices=(
                 ('+', 'Created'),
                 ('~', 'Changed'),
