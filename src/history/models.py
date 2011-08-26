@@ -24,24 +24,20 @@ class HistoricalRecords(object):
     def contribute_to_class(self, cls, name):
         self.manager_name = name
         models.signals.class_prepared.connect(self.finalize, sender=cls)
-        self.monkey_patch_name_map(cls, name)
 
-        if self.add_history_properties:
-            self.monkey_patch_history_properties(cls, name)
-
-    def monkey_patch_history_properties(self, cls, name):
+    def monkey_patch_history_properties(self, cls):
         '''
         Add 'created_date' and 'last_modified_date' properties to the model
         we're managing history for, calling the underlying manager to get the 
         values.
         '''
-        created_date = lambda m: getattr(m, name).created_date
-        cls.created_date = property(_created_date)
+        created_date = lambda m: getattr(m, self.manager_name).created_date
+        cls.created_date = property(created_date)
 
-        last_modified_date = lambda m: getattr(m, name).last_modified_date
-        cls.last_modified_date = property(_last_modified_date)
+        last_modified_date = lambda m: getattr(m, self.manager_name).last_modified_date
+        cls.last_modified_date = property(last_modified_date)
 
-    def monkey_patch_name_map(self, cls, name):
+    def monkey_patch_name_map(self, cls):
         '''
         Replace init_name_map() with a custom implementation, allowing us to
         trick Django into recognizing a phantom history relation that can
@@ -63,32 +59,30 @@ class HistoricalRecords(object):
         original_init_name_map = cls._meta.__class__.init_name_map
         def init_name_map(meta):
             original_map = original_init_name_map(meta)
+            updated_map = self.update_item_name_map(original_map, cls)
 
-            # only patch after app cache has been prepared
-            if app_cache_ready():
-                updated_map = self.update_item_name_map(original_map, cls, name)
-                if original_map != updated_map:
-                    meta._name_map = updated_map
+            if original_map != updated_map and app_cache_ready():
+                meta._name_map = updated_map
                 return updated_map
-            else:
-                return original_map
+            
+            return original_map
         cls._meta.__class__.init_name_map = init_name_map
         
         # keep track of the fact that we patched this so we don't patch
         # it multiple times
         self.PATCHED_META_CLASSES[cls._meta.__class__] = True
 
-    def update_item_name_map(self, map, cls, name):
+    def update_item_name_map(self, map, cls):
 
         # inject additional lookup into item name map
-        history_model = getattr(cls, name).model
+        history_model = getattr(cls, self.manager_name).model
         history_fk = models.ForeignKey(cls)
         history_fk.column = cls._meta.pk.get_attname()
         history_fk.model = history_model
         rel = RelatedObject(cls, history_model, history_fk)
 
         m = dict(map)
-        m[name] = (rel, None, False, False)
+        m[self.manager_name] = (rel, None, False, False)
         return m
 
     def get_field_dependencies(self, model):
@@ -107,17 +101,27 @@ class HistoricalRecords(object):
         models.signals.post_delete.connect(self.post_delete, sender=sender,
                                            weak=False)
 
-        deps = self.get_field_dependencies(sender)
-        count = [len(deps)] 
-        def dependency_resolved(field, model, cls):
-            count[0] = count[0] - 1
-            if count[0] == 0:
-                history_model = self.create_history_model(sender)
-                descriptor = manager.HistoryDescriptor(history_model)
-                setattr(sender, self.manager_name, descriptor)
+        def _finalize():
+            history_model = self.create_history_model(sender)
+            descriptor = manager.HistoryDescriptor(history_model)
+            setattr(sender, self.manager_name, descriptor)
+            self.monkey_patch_name_map(sender)
 
-        for dep in deps:
-            add_lazy_relation(sender, None, dep.rel.to, dependency_resolved)
+            if self.add_history_properties:
+                self.monkey_patch_history_properties(sender)
+
+        deps = self.get_field_dependencies(sender)
+        if deps:
+            count = [len(deps)] 
+            def dependency_resolved(*args):
+                count[0] = count[0] - 1
+                if count[0] == 0:
+                    _finalize()
+
+            for dep in deps:
+                add_lazy_relation(sender, None, dep.rel.to, dependency_resolved)
+        else:
+            _finalize()
 
     def create_history_model(self, model):
         """
