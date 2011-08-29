@@ -175,6 +175,11 @@ class HistoricalRecords(object):
                 # existing one must be replaced with an IntegerField.
                 field.__class__ = models.IntegerField
 
+            if isinstance(field, models.DateField) or \
+                    isinstance(field, models.TimeField):
+                field.auto_now = False
+                field.auto_now_add = False
+
             if field.primary_key or field.unique:
                 # Unique fields can no longer be guaranteed unique,
                 # but they should still be indexed for faster lookups.
