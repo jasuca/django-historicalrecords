@@ -1,6 +1,7 @@
 import copy
 import datetime
 
+import django.db
 from django.db import models
 from django.db.models.fields.related import add_lazy_relation, RelatedField
 from django.db.models.loading import app_cache_ready
@@ -224,12 +225,35 @@ class HistoricalRecords(object):
         self.create_historical_record(instance, created and '+' or '~')
 
     def post_delete(self, instance, **kwargs):
-        self.create_historical_record(instance, '-')
+        try:
+            self.create_historical_record(instance, '-')
+        except HistoricalIntegrityError:
+            pass
 
     def create_historical_record(self, instance, type):
         manager = getattr(instance, self.manager_name)
         attrs = {}
         for field in instance._meta.fields:
+            '''
+            Detect a condition where a cascading delete causes an integrity
+            error because the post_delete trigger tries to create a 
+            reference to a now-deleted instance in its history record.  This
+            should only be an issue on PRESERVEd foreign keys, since CONVERTed
+            ones won't have an explicit reference.  
+            
+            Raise a specific exception when the condition is detected, allowing
+            post_delete to ignore historical record creation in this case.
+            '''
+            if isinstance(field, models.ForeignKey):
+                conversion = self.key_conversions.get(field.name, CONVERT)
+                if conversion == CONVERT:
+                    try:
+                        # dereference key to make sure it exists
+                        getattr(instance, field.name) 
+                    except field.rel.to.DoesNotExist as e:
+                        raise HistoricalIntegrityError(e)
+
+            # copy field values normally
             attrs[field.attname] = getattr(instance, field.attname)
         manager.create(history_type=type, **attrs)
 
@@ -240,3 +264,6 @@ class HistoricalObjectDescriptor(object):
     def __get__(self, instance, owner):
         values = (getattr(instance, f.attname) for f in self.model._meta.fields)
         return self.model(*values)
+
+class HistoricalIntegrityError(django.db.IntegrityError):
+    pass
