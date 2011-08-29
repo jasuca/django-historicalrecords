@@ -246,7 +246,7 @@ class HistoricalRecords(object):
             '''
             if isinstance(field, models.ForeignKey):
                 conversion = self.key_conversions.get(field.name, CONVERT)
-                if conversion == CONVERT:
+                if conversion == PRESERVE:
                     try:
                         # dereference key to make sure it exists
                         getattr(instance, field.name) 
