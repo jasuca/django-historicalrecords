@@ -66,6 +66,16 @@ class ConvertFkToVersionedModel(BaseModel):
     fk = models.ForeignKey('VersionedModel', related_name='rel_c')
     history = HistoricalRecords(key_conversions={'fk': CONVERT})
 
+class NullCascadingFkModel(BaseModel):
+    '''
+    Test that on_delete SET_NULL behavior works as expected.
+    '''
+    fk = models.ForeignKey('NonversionedModel',
+                           null=True,
+                           blank=True,
+                           on_delete=models.SET_NULL)
+    history = HistoricalRecords(key_conversions={'fk': PRESERVE})
+
 class DateFieldTestModel(BaseModel):
     '''
     Test model to ensure that date and time fields are properly copied to 

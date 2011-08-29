@@ -89,7 +89,6 @@ class PreservedForeignKeyTest(FkTestCase):
             self.assertEqual(p.rel_p_historical.exclude(fk=p).count(), 0)
 
     def test_drop_parent_cascade(self):
-
         self.nv.delete()
         self.assertEqual(models.PreserveFkToNonversionedModel.objects.count(), 0)
         self.assertEqual(models.PreserveFkToNonversionedModel.history.count(), 0)
@@ -126,12 +125,25 @@ class PropertyPatchTest(TestCase):
     def test_properties(self):
         # create model with multiple versions and assert that 'created_date'
         # and 'last_modified_date' are accessible and not equal
-        m = models.MonkeyPatchedPropertiesTestModel.objects.create(integer=1)
-        m.integer = 2
-        m.save()
-        m.integer = 3
-        m.save()
+        m = create_history(models.MonkeyPatchedPropertiesTestModel, 
+                           'integer', range(5))
         self.assertNotEqual(m.created_date, m.last_modified_date)
+
+class OnDeleteTest(TestCase):
+    def test_on_delete_set_null(self):
+        n = models.NonversionedModel.objects.create(characters='nonversioned')
+        m = create_history(models.NullCascadingFkModel,
+                           'integer', range(5),
+                           fk=n)
+
+        # delete fk relation and ensure that object and its history remain
+        n.delete()
+        m = m.__class__.objects.get(id=m.id)
+        self.assertEqual(m.fk, None)
+        self.assertEqual(m.history.count(), 5)
+        for mh in m.history.all():
+            self.assertEqual(m.fk, None)
+
 
 class DateFieldAutoNowTest(TestCase):
     def test_auto_now_fields(self):
