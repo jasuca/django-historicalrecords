@@ -148,7 +148,7 @@ class HistoricalRecords(object):
             # Deal with foreign keys, optionally according to a configured
             # behavior scheme.
             if isinstance(field, models.ForeignKey):
-                conversion = self.key_conversions.get(field.name)
+                conversion = self.key_conversions.get(field.name, CONVERT)
                 if conversion == CONVERT:
                     # Convert the ForeignKey to a plain primary key field
                     options = {
@@ -159,13 +159,16 @@ class HistoricalRecords(object):
                     field = copy.copy(field.rel.to._meta.pk)
                     [setattr(field, key, options[key]) for key in options]
 
-                else: # PRESERVE
+                elif conversion == PRESERVE:
                     # Preserve ForeignKey relationships with a reasonable 
                     # related_name, fixing a syncdb issue.
                     rel = copy.copy(field.rel)
                     related_name = rel.related_name or field.opts.object_name.lower()
                     rel.related_name = related_name + '_historical'
                     field.rel = rel
+                else:
+                    # This should never happen, let's make sure!
+                    raise ValueError('Invalid key conversion type')
             
             if isinstance(field, models.AutoField):
                 # The historical model gets its own AutoField, so any
