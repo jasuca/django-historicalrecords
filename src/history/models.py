@@ -4,7 +4,7 @@ import datetime
 import django.db
 from django.db import models
 from django.db.models.fields.related import add_lazy_relation, RelatedField
-from django.db.models.loading import app_cache_ready
+from django.db.models.loading import app_cache_ready, AppCache
 from django.db.models.related import RelatedObject
 
 from history import manager
@@ -16,6 +16,7 @@ CONVERT = 2
 class HistoricalRecords(object):
 
     PATCHED_META_CLASSES = {}
+    HISTORICAL_RECORD_CLASSES = {}
 
     def __init__(self, key_conversions=None,
                  add_history_properties=False):
@@ -23,6 +24,10 @@ class HistoricalRecords(object):
         self.add_history_properties = add_history_properties
 
     def contribute_to_class(self, cls, name):
+        if cls._meta in self.HISTORICAL_RECORD_CLASSES:
+            AppCache().app_errors[cls._meta] = 'Models cannot have more than one HistoricalRecords field.'
+        self.HISTORICAL_RECORD_CLASSES[cls._meta] = True
+        
         self.manager_name = name
         models.signals.class_prepared.connect(self.finalize, sender=cls)
 
@@ -207,6 +212,7 @@ class HistoricalRecords(object):
                 ('-', 'Deleted'),
             )),
             'history_object': HistoricalObjectDescriptor(model),
+            'primary_model': model,
             '__unicode__': lambda self: u'%s as of %s' % (self.history_object,
                                                           self.history_date)
         }
@@ -246,7 +252,7 @@ class HistoricalRecords(object):
             '''
             if isinstance(field, models.ForeignKey):
                 conversion = self.key_conversions.get(field.name, CONVERT)
-                if conversion == CONVERT:
+                if conversion == PRESERVE:
                     try:
                         # dereference key to make sure it exists
                         getattr(instance, field.name) 

@@ -5,72 +5,117 @@ class HistoryDescriptor(object):
         self.model = model
 
     def __get__(self, instance, owner):
-        if instance is None:
-            return HistoryManager(self.model)
-        return HistoryManager(self.model, instance)
+        return HistoryManager(self.model, owner, instance)
 
 class HistoryManager(models.Manager):
-    def __init__(self, model, instance=None):
+    def __init__(self, model, primary_model, instance=None):
         super(HistoryManager, self).__init__()
         self.model = model
+        self.primary_model = primary_model
         self.instance = instance
 
     def get_query_set(self):
-        if self.instance is None:
-            return super(HistoryManager, self).get_query_set()
+        qs = super(HistoryManager, self).get_query_set()
+        if self.instance:
+            qs = self._filter_queryset_by_pk(qs, self.instance.pk)
+        return qs
 
-        filter = {self.instance._meta.pk.name: self.instance.pk}
-        return super(HistoryManager, self).get_query_set().filter(**filter)
+    def _filter_queryset_by_pk(self, qs, pk):
+        return qs.filter(**{self.primary_model._meta.pk.name: pk})
 
-    def most_recent(self):
+    def most_recent(self, pk=None):
         """
-        Returns the most recent copy of the instance available in the history.
+        If called with an instance, returns the most recent copy of the instance
+        available in the history.
+
+          >>> obj = Obj.objects.get(pk=1)
+          >>> obj.history.most_recent()
+          <Obj...>
+        
+        If called without an instance, returns the most recent copy of an 
+        instance matching pk.
+
+          >>> Obj.history.most_recent(pk=1)
+          <Obj...>
         """
-        if not self.instance:
-            raise TypeError("Can't use most_recent() without a %s instance." % \
-                            self.instance._meta.object_name)
-        fields = (field.name for field in self.instance._meta.fields)
+        pk = self.instance.pk if self.instance else pk
+        qs = self._filter_queryset_by_pk(self.get_query_set(), pk)
+
+        fields = (field.name for field in self.primary_model._meta.fields)
         try:
-            values = self.values_list(*fields)[0]
+            values = qs.values_list(*fields)[0]
         except IndexError:
-            raise self.instance.DoesNotExist("%s has no historical record." % \
-                                             self.instance._meta.object_name)
-        return self.instance.__class__(*values)
+            message = "%s(pk=%s) has no historical record." % \
+                (self.primary_model.__name__, pk)
+            raise self.primary_model.DoesNotExist(message)
+        else:
+            return self.primary_model(pk=pk, *values)
 
-    def as_of(self, date):
+    def as_of(self, date, pk=None, restore=False):
         """
-        Returns an instance of the original model with all the attributes set
-        according to what was present on the object on the date provided.
+        If called with an instance, returns an instance of the original model
+        with all the attributes set to what was present on the object on the 
+        date provided.
+
+          >>> obj = Obj.objects.get(pk=1)
+          >>> obj.history.as_of(datetime.datetime(2000, 1, 1))
+          <Obj...>
+        
+        If called without an instance, has similar behavior but does its lookup
+        based on the pk provided.
+
+          >>> Obj.history.as_of(datetime.datetime(2000, 1, 1), pk=1)
+          <Obj...>
         """
-        if not self.instance:
-            raise TypeError("Can't use as_of() without a %s instance." % \
-                            self.instance._meta.object_name)
-        fields = (field.name for field in self.instance._meta.fields)
-        qs = self.filter(history_date__lte=date)
+        pk = self.instance.pk if self.instance else pk
+        qs = self._filter_queryset_by_pk(self.get_query_set(), pk)
+
+        fields = (field.name for field in self.primary_model._meta.fields)
+        qs = qs
         try:
-            values = qs.values_list('history_type', *fields)[0]
+            values = qs\
+                .filter(history_date__lte=date)\
+                .values_list('history_type', *fields)[0]
         except IndexError:
-            raise self.instance.DoesNotExist("%s had not yet been created." % \
-                                             self.instance._meta.object_name)
-        if values[0] == '-':
-            raise self.instance.DoesNotExist("%s had already been deleted." % \
-                                             self.instance._meta.object_name)
-        return self.instance.__class__(*values[1:])
+            message = "%s(pk=%s) had not yet been created." % \
+                (self.primary_model.__name__, pk)
+            raise self.primary_model.DoesNotExist(message)
+        else:
+            if values[0] == '-' and not restore:
+                message = "%s(pk=%s) had already been deleted." % \
+                    (self.primary_model.__name__, pk)
+                raise self.primary_model.DoesNotExist(message)
+
+            return self.primary_model(pk=pk, *values[1:])
 
     @property
     def created_date(self):
         if not self.instance:
-            raise TypeError("Can't use created_date() without a %s instance." %\
-                                self.instance._meta.object_name)
+            raise TypeError("Can't use created_date() without a %s instance." % \
+                                self.primary_model._meta.object_name)
         return self.aggregate(created=models.Min('history_date'))['created']
 
     @property
     def last_modified_date(self):
         if not self.instance:
-            raise TypeError("Can't use last_modified_date() without a %s instance." %\
-                                self.instance._meta.object_name)
+            raise TypeError("Can't use last_modified_date() without a %s instance." % \
+                                self.primary_model._meta.object_name)
+
         return self.aggregate(modified=models.Max('history_date'))['modified']
-                              
+
+    def get_or_restore(self, pk):
+        '''
+        Looks for an existing item with the given primary key in the primary
+        object table - return it if it exists, otherwise try to 'restore' the
+        most recent version of the item.
+        '''
+        if self.instance:
+            raise TypeError("Can't use get_or_restore() with a %s instance." %\
+                            self.instance._meta.object_name)
+        try:
+            return self.primary_model._default_manager.get(pk=pk)
+        except self.primary_model.DoesNotExist:
+            return self.most_recent(pk=pk)
 
 class HistoricalAnnotatingManager(models.Manager):
 
