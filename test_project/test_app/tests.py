@@ -5,6 +5,7 @@ unittest). These will both pass when you run "manage.py test".
 Replace these with more appropriate tests for your application.
 """
 
+from django.conf import settings
 from django.db.models import Sum, Min, Max, Count
 from django.test import TransactionTestCase as TestCase
 from test_app import models
@@ -50,6 +51,18 @@ class BasicHistoryTest(TestCase):
             .aggregate(x=Sum('history__integer'))['x']
         self.assertEqual(aggsum, sum(range(10)))
 
+    def test_primary_model_access(self):
+        '''
+        Test that HistoryManager and HistoryRecords (and its instances) have 
+        access to the primary model that their history records shadow.
+        '''
+        m = create_history(models.VersionedModel, 'integer', range(5))
+        self.assertEqual(m.history.primary_model, 
+                         models.VersionedModel)
+        self.assertEqual(m.history.all()[0].primary_model, 
+                         models.VersionedModel)
+        self.assertEqual(models.VersionedModel.history.primary_model, 
+                         models.VersionedModel)
 
 class FkTestCase(TestCase):
     def setUp(self):

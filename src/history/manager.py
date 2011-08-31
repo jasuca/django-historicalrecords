@@ -5,14 +5,13 @@ class HistoryDescriptor(object):
         self.model = model
 
     def __get__(self, instance, owner):
-        if instance is None:
-            return HistoryManager(self.model)
-        return HistoryManager(self.model, instance)
+        return HistoryManager(self.model, owner, instance)
 
 class HistoryManager(models.Manager):
-    def __init__(self, model, instance=None):
+    def __init__(self, model, primary_model, instance=None):
         super(HistoryManager, self).__init__()
         self.model = model
+        self.primary_model = primary_model
         self.instance = instance
 
     def get_query_set(self):
