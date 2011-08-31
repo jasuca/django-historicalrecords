@@ -1,5 +1,6 @@
 from django.db import models
 
+
 class HistoryDescriptor(object):
     def __init__(self, model):
         self.model = model
@@ -41,7 +42,7 @@ class HistoryManager(models.Manager):
         pk = self.instance.pk if self.instance else pk
         qs = self._filter_queryset_by_pk(self.get_query_set(), pk)
 
-        fields = (field.name for field in self.primary_model._meta.fields)
+        fields = self.model.important_field_names
         try:
             values = qs.values_list(*fields)[0]
         except IndexError:
@@ -70,7 +71,7 @@ class HistoryManager(models.Manager):
         pk = self.instance.pk if self.instance else pk
         qs = self._filter_queryset_by_pk(self.get_query_set(), pk)
 
-        fields = (field.name for field in self.primary_model._meta.fields)
+        fields = self.model.important_field_names
         qs = qs
         try:
             values = qs\
