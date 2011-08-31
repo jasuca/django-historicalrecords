@@ -4,7 +4,7 @@ unittest). These will both pass when you run "manage.py test".
 
 Replace these with more appropriate tests for your application.
 """
-
+import datetime
 from django.conf import settings
 from django.db.models import Sum, Min, Max, Count
 from django.test import TransactionTestCase as TestCase
@@ -63,6 +63,105 @@ class BasicHistoryTest(TestCase):
                          models.VersionedModel)
         self.assertEqual(models.VersionedModel.history.primary_model, 
                          models.VersionedModel)
+
+    def test_most_recent(self):
+        # by instance
+        m = create_history(models.VersionedModel, 'characters', ['a', 'b', 'c'])
+        m_most_recent = m.history.most_recent()
+        self.assertEqual(m_most_recent.characters, 'c')
+        
+        # by pk
+        m_pk = m.pk
+        m.delete()
+        m_most_recent = models.VersionedModel.history.most_recent(pk=m_pk)
+        self.assertEqual(m_most_recent.characters, 'c')
+
+        
+    def test_as_of(self):
+        # set up tests
+        before_create = datetime.datetime.now()        
+        m = create_history(models.VersionedModel, 'characters', ['a', 'b', 'c'])
+        m_pk = m.pk
+        after_create = datetime.datetime.now()
+        
+        # create a list of tuples of (lookup_date, expected_value) for exact
+        # values of lookup_date, ordered from earliest to latest
+        expected_vals = list(m.history\
+                                 .order_by('history_date')\
+                                 .values_list('history_date', 'characters'))
+        last_mod, last_val = expected_vals[-1]
+        expected_vals.append((after_create, last_val))
+        
+        # add (lookup_date, expected value) tuples for interpolated dates
+        def interpolate_dates(date_min, date_max):
+            return date_min + ((date_max - date_min) / 2)
+
+        expected_vals += [(interpolate_dates(t1, t2), v1)
+                          for ((t1, v1), (t2, v2)) in
+                          zip(expected_vals[:-1], expected_vals[1:])]
+        
+        #-------------------------------
+        # by instance
+        #-------------------------------
+
+        # lookup before item was created should fail
+        with self.assertRaises(models.VersionedModel.DoesNotExist):
+            m.history.as_of(before_create)
+
+        # current lookup should match current history lookup
+        self.assertEqual(m.characters, 
+                         m.history.as_of(datetime.datetime.now()).characters)
+
+        # exact and interpolated lookups should return their expected values
+        for lookup_date, expected_value in expected_vals:
+            self.assertEqual(expected_value,
+                             m.history.as_of(lookup_date).characters)
+
+        #-------------------------------
+        # by pk
+        #-------------------------------
+
+        # lookup before item was created should fail
+        with self.assertRaises(models.VersionedModel.DoesNotExist):
+            models.VersionedModel.history.as_of(before_create, pk=m_pk)
+
+        # lookup on bogus pk should fail
+        with self.assertRaises(models.VersionedModel.DoesNotExist):
+            models.VersionedModel.history.as_of(datetime.datetime.now(),
+                                                pk=10000) # fake pk
+
+        # exact and interpolated lookups should return their expected values,
+        # even after deletion of the primary object
+        m.delete()
+        for lookup_date, expected_value in expected_vals:
+            hist_obj = models.VersionedModel.history.as_of(lookup_date, pk=m_pk)
+            self.assertEqual(expected_value, hist_obj.characters)
+
+
+    def test_get_or_restore(self):
+        m = create_history(models.VersionedModel, 'integer', range(3))
+        m_pk = m.pk
+
+        # now you see it...
+        m2 = models.VersionedModel.history.get_or_restore(pk=m_pk)
+        self.assertEqual(m.integer, m2.integer)
+        self.assertEqual(m_pk, m2.pk)
+
+        # ...now you don't...
+        m.delete()
+        with self.assertRaises(models.VersionedModel.DoesNotExist):
+            models.VersionedModel.objects.get(pk=m_pk)
+
+        # ...now you do again!
+        m3 = models.VersionedModel.history.get_or_restore(pk=m_pk)
+        self.assertEqual(m.integer, m3.integer)
+        self.assertEqual(m_pk, m3.pk)
+        m3.save()
+
+        m4 = models.VersionedModel.objects.get(pk=m_pk)
+        self.assertEqual(m.integer, m4.integer)
+        self.assertEqual(m_pk, m4.pk)
+
 
 class FkTestCase(TestCase):
     def setUp(self):
@@ -196,5 +295,3 @@ class DateFieldAutoNowTest(TestCase):
             equal_versions = m.history.filter(**{field_name: 
                                                  earliest_historical})
             self.assertEqual(equal_versions.count(), 5)
-            
-
