@@ -1,6 +1,11 @@
 from django.db import models
 from history.models import HistoricalRecords, CONVERT, PRESERVE
 
+# stop Django auth's broken permission generation from thwarting our efforts here
+# (see wontfix'd ticket #4748 and the more recent #8162 which isn't dead yet)
+import django.contrib.auth.management as auth_management
+auth_management._get_all_permissions = lambda opts: [] # get no permissions 
+
 class BaseModel(models.Model):
     '''
     Abstract model that contributes a set of standard fields to the test models

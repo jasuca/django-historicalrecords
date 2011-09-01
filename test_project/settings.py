@@ -11,12 +11,8 @@ MANAGERS = ADMINS
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql_psycopg2', # Add 'postgresql_psycopg2', 'postgresql', 'mysql', 'sqlite3' or 'oracle'.
-        'NAME': 'hist_test',                      # Or path to database file if using sqlite3.
-        'USER': 'asurepo',                      # Not used with sqlite3.
-        'PASSWORD': 'repoPass',                  # Not used with sqlite3.
-        'HOST': 'localhost',                      # Set to empty string for localhost. Not used with sqlite3.
-        'PORT': '',                      # Set to empty string for default. Not used with sqlite3.
+        'ENGINE': 'django.db.backends.sqlite3', 
+        'NAME': 'test.db'
     }
 }
 
@@ -84,6 +80,8 @@ TEMPLATE_DIRS = (
 )
 
 INSTALLED_APPS = (
+    'django.contrib.contenttypes',
+    'django.contrib.auth',
     'test_app',
 )
 
