@@ -40,7 +40,10 @@ class HistoricalRecords(object):
                          migrations, and table names.)
     - (optional) fields: a list of field names to be checked and saved. If
                          nothing is defined, all fields will be saved.
-    """    
+    """
+    
+    # meta -> (model, manager_name, history_model)
+    REGISTRY = {}
 
     def __init__(self, 
                  module=None,
@@ -55,14 +58,6 @@ class HistoricalRecords(object):
     def contribute_to_class(self, cls, name):
         self.manager_name = name
         models.signals.class_prepared.connect(self.model_prepared, sender=cls)
-        self.validate_model(cls)
-
-    HISTORICAL_RECORD_CLASSES = {}
-
-    def validate_model(self, cls):
-        if cls._meta in self.HISTORICAL_RECORD_CLASSES:
-            AppCache().app_errors[cls._meta] = 'Models cannot have more than one HistoricalRecords field.'
-        self.HISTORICAL_RECORD_CLASSES[cls._meta] = True
 
     def model_prepared(self, sender, **kwargs):
         '''
@@ -101,6 +96,12 @@ class HistoricalRecords(object):
         self.capture_save_method(model)
         self.create_set_editor_method(model)
 
+        if model._meta in HistoricalRecords.REGISTRY:
+            AppCache().app_errors[model._meta] = 'Models cannot have more than one HistoricalRecords field.'
+        else:
+            regvalue = model, self.manager_name, history_model
+            HistoricalRecords.REGISTRY[model._meta] = regvalue
+
     def monkey_patch_history_properties(self, cls):
         '''
         Add 'created_date' and 'last_modified_date' properties to the model
@@ -135,30 +136,34 @@ class HistoricalRecords(object):
         @wraps(original_init_name_map)
         def new_init_name_map(meta):
             original_map = original_init_name_map(meta)
-            updated_map = self.update_item_name_map(original_map, cls)
-
+            updated_map = self.update_item_name_map(original_map, meta)
             if original_map != updated_map and app_cache_ready():
                 meta._name_map = updated_map
                 return updated_map
-            
             return original_map
 
         # this may be called multiple times - only patch once
         if opts.init_name_map.func_code != new_init_name_map.func_code:
             opts.init_name_map = new_init_name_map
 
-    def update_item_name_map(self, map, cls):
+    def update_item_name_map(self, map, meta):
+        if meta not in HistoricalRecords.REGISTRY:
+            return map
 
-        # inject additional lookup into item name map
-        history_model = getattr(cls, self.manager_name).model
-        history_fk = models.ForeignKey(cls)
-        history_fk.column = cls._meta.pk.get_attname()
-        history_fk.model = history_model
-        rel = RelatedObject(cls, history_model, history_fk)
+        # item is registered as a history item, see if it needs to
+        # update the item name map
+        model, mgr, hmodel = HistoricalRecords.REGISTRY.get(meta)
 
+        # inject additional lookup into item name map        
+        history_fk = models.ForeignKey(model)
+        history_fk.column = meta.pk.get_attname()
+        history_fk.model = hmodel
+        rel = RelatedObject(model, hmodel, history_fk)
+        
         m = dict(map)
-        m[self.manager_name] = (rel, None, False, False)
+        m[mgr] = (rel, None, False, False)
         return m
+        
 
     def capture_save_method(self, model):
         """
@@ -359,7 +364,7 @@ class HistoricalRecords(object):
         # Decide whether to save a history copy: only when certain fields were changed.
         save = True
         try:
-            most_recent = instance.history.most_recent()
+            most_recent = getattr(instance, self.manager_name).most_recent()
             save = False
             for field in self.get_important_field_names(instance):
                 if getattr(instance, field) != getattr(most_recent, field):

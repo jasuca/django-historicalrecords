@@ -128,3 +128,7 @@ class DeferredClassBuildModel(BaseModel):
     fk1 = models.ForeignKey('NonversionedModel')
     history = HistoricalRecords()
     fk2 = models.ForeignKey('VersionedModel')
+
+class AlternatePkNameModel(BaseModel):
+    pk_alt = models.AutoField(primary_key=True)
+    history = HistoricalRecords()

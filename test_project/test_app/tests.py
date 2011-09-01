@@ -30,29 +30,34 @@ def add_history(instance, prop, values):
 class BasicHistoryTest(TestCase):
 
     def setUp(self):
+        self.model = getattr(self, 'model', models.VersionedModel)
+        
+        # account for the fact that the history manager won't always
+        # be named 'history'
+        self.history_manager = getattr(self, 'history_manager', 'history')
+
         # create ten history items
-        self.model = getattr(self, 'model', None) or models.VersionedModel
         self.obj = create_history(self.model, 'integer', range(10))
-        
-        
+
     def test_history_count(self):
-        self.assertEqual(self.obj.history.count(), 10)
+        self.assertEqual(getattr(self.obj, self.history_manager).count(), 10)
 
     def test_in_filter_chain(self):
-        self.assertEqual(self.model.objects\
-                             .filter(history__integer=-1).count(), 0)
-        self.assertEqual(self.model.objects\
-                             .filter(history__integer=10).count(), 0)
-        for i in range(10):
-            self.assertEqual(self.model.objects\
-                                 .filter(history__integer=i).count(), 1)
+        # test counts by integer value - expect one each for the objects
+        # we mocked, zero for values we didn't set
+        expected = [(i, 1) for i in range(10)] + [(-1, 0), (10, 0)]
+
+        for val, count in expected:
+            filter = {'%s__integer' % self.history_manager: val}
+            self.assertEqual(self.model.objects.filter(**filter).count(), count)
 
     def test_in_aggregates(self):
         aggcount = self.model.objects\
-            .aggregate(x=Count('history'))['x']
+            .aggregate(x=Count(self.history_manager))['x']
         self.assertEqual(aggcount, 10)
 
-        aggsum = self.model.objects.aggregate(x=Sum('history__integer'))['x']
+        aggsum = self.model.objects\
+            .aggregate(x=Sum('%s__integer' % self.history_manager))['x']
         self.assertEqual(aggsum, sum(range(10)))
 
     def test_primary_model_access(self):
@@ -61,20 +66,24 @@ class BasicHistoryTest(TestCase):
         access to the primary model that their history records shadow.
         '''
         m = create_history(self.model, 'integer', range(5))
-        self.assertEqual(m.history.primary_model, self.model)
-        self.assertEqual(m.history.all()[0].primary_model, self.model)
-        self.assertEqual(self.model.history.primary_model, self.model)
+        self.assertEqual(getattr(m, self.history_manager).primary_model, 
+                         self.model)
+        self.assertEqual(getattr(m, self.history_manager).all()[0].primary_model,
+                         self.model)
+        self.assertEqual(getattr(self.model, self.history_manager).primary_model,
+                         self.model)
 
     def test_most_recent(self):
         # by instance
         m = create_history(self.model, 'characters', ['a', 'b', 'c'])
-        m_most_recent = m.history.most_recent()
+        m_most_recent = getattr(m, self.history_manager).most_recent()
         self.assertEqual(m_most_recent.characters, 'c')
         
         # by pk
         m_pk = m.pk
         m.delete()
-        m_most_recent = self.model.history.most_recent(pk=m_pk)
+        m_most_recent = getattr(self.model, self.history_manager)\
+            .most_recent(pk=m_pk)
         self.assertEqual(m_most_recent.characters, 'c')
 
         
@@ -87,7 +96,7 @@ class BasicHistoryTest(TestCase):
         
         # create a list of tuples of (lookup_date, expected_value) for exact
         # values of lookup_date, ordered from earliest to latest
-        expected_vals = list(m.history\
+        expected_vals = list(getattr(m, self.history_manager)\
                                  .order_by('history_date')\
                                  .values_list('history_date', 'characters'))
         last_mod, last_val = expected_vals[-1]
@@ -107,16 +116,19 @@ class BasicHistoryTest(TestCase):
 
         # lookup before item was created should fail
         with self.assertRaises(self.model.DoesNotExist):
-            m.history.as_of(before_create)
+            getattr(m, self.history_manager).as_of(before_create)
 
         # current lookup should match current history lookup
         self.assertEqual(m.characters, 
-                         m.history.as_of(datetime.datetime.now()).characters)
+                         getattr(m, self.history_manager)\
+                             .as_of(datetime.datetime.now())\
+                             .characters)
 
         # exact and interpolated lookups should return their expected values
         for lookup_date, expected_value in expected_vals:
             self.assertEqual(expected_value,
-                             m.history.as_of(lookup_date).characters)
+                             getattr(m, self.history_manager)
+                             .as_of(lookup_date).characters)
 
         #-------------------------------
         # by pk
@@ -124,18 +136,20 @@ class BasicHistoryTest(TestCase):
 
         # lookup before item was created should fail
         with self.assertRaises(self.model.DoesNotExist):
-            self.model.history.as_of(before_create, pk=m_pk)
+            getattr(self.model, self.history_manager)\
+                .as_of(before_create, pk=m_pk)
 
         # lookup on bogus pk should fail
-        with self.assertRaises(models.VersionedModel.DoesNotExist):
-            self.model.history.as_of(datetime.datetime.now(),
-                                     pk=10000) # fake pk
+        with self.assertRaises(self.model.DoesNotExist):
+            getattr(self.model, self.history_manager)\
+                .as_of(datetime.datetime.now(), pk=10000) # fake pk
 
         # exact and interpolated lookups should return their expected values,
         # even after deletion of the primary object
         m.delete()
         for lookup_date, expected_value in expected_vals:
-            hist_obj = self.model.history.as_of(lookup_date, pk=m_pk)
+            hist_obj = getattr(self.model, self.history_manager)\
+                .as_of(lookup_date, pk=m_pk)
             self.assertEqual(expected_value, hist_obj.characters)
 
     def test_get_or_restore(self):
@@ -143,7 +157,7 @@ class BasicHistoryTest(TestCase):
         m_pk = m.pk
 
         # now you see it...
-        m2 = self.model.history.get_or_restore(pk=m_pk)
+        m2 = getattr(self.model, self.history_manager).get_or_restore(pk=m_pk)
         self.assertEqual(m.integer, m2.integer)
         self.assertEqual(m_pk, m2.pk)
 
@@ -153,7 +167,7 @@ class BasicHistoryTest(TestCase):
             self.model.objects.get(pk=m_pk)
 
         # ...now you do again!
-        m3 = self.model.history.get_or_restore(pk=m_pk)
+        m3 = getattr(self.model, self.history_manager).get_or_restore(pk=m_pk)
         self.assertEqual(m.integer, m3.integer)
         self.assertEqual(m_pk, m3.pk)
         m3.save()
@@ -171,9 +185,11 @@ class BasicHistoryTest(TestCase):
             m.save(editor=users[idx % len(users)])
 
         for u in users:
-            self.assertEqual(m.history.filter(history_editor=u).count(), 3)
+            self.assertEqual(getattr(m, self.history_manager)\
+                                 .filter(history_editor=u).count(), 3)
 
-        for idx, hrec in enumerate(m.history.all().order_by('history_id')):
+        for idx, hrec in enumerate(getattr(m, self.history_manager)\
+                                       .all().order_by('history_id')):
             self.assertEqual(hrec.history_editor, users[idx % len(users)])
 
 @unittest.skip("Inherited classes aren't supported yet")
@@ -181,6 +197,17 @@ class InheritedFkTest(BasicHistoryTest):
     def setUp(self):
         self.model = models.InheritedVersionedModel
         super(InheritedFkTest, self).setUp()
+
+class AlternatePkNameTest(BasicHistoryTest):
+    def setUp(self):
+        self.model = models.AlternatePkNameModel
+        super(AlternatePkNameTest, self).setUp()
+
+class RenamedHistoryFieldTest(BasicHistoryTest):
+    def setUp(self):
+        self.model = models.RenamedHistoryFieldModel
+        self.history_manager = 'othername'
+        super(RenamedHistoryFieldTest, self).setUp()
 
 class FkTestCase(TestCase):
     def setUp(self):
