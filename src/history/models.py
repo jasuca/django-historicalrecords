@@ -41,9 +41,9 @@ class HistoricalRecords(object):
     - (optional) fields: a list of field names to be checked and saved. If
                          nothing is defined, all fields will be saved.
     """
-
-    PATCHED_META_CLASSES = {}
-    HISTORICAL_RECORD_CLASSES = {}
+    
+    # meta -> (model, manager_name, history_model)
+    REGISTRY = {}
 
     def __init__(self, 
                  module=None,
@@ -56,12 +56,51 @@ class HistoricalRecords(object):
         self.add_history_properties = add_history_properties
 
     def contribute_to_class(self, cls, name):
-        if cls._meta in self.HISTORICAL_RECORD_CLASSES:
-            AppCache().app_errors[cls._meta] = 'Models cannot have more than one HistoricalRecords field.'
-        self.HISTORICAL_RECORD_CLASSES[cls._meta] = True
-        
         self.manager_name = name
-        models.signals.class_prepared.connect(self.finalize, sender=cls)
+        models.signals.class_prepared.connect(self.model_prepared, sender=cls)
+
+    def model_prepared(self, sender, **kwargs):
+        '''
+        Wait for any field dependencies to be resolved, then call finalize().
+        '''
+        model = sender
+        deps = self.get_field_dependencies(model)
+        if deps:
+            count = [len(deps)] 
+            def dependency_resolved(*args):
+                count[0] = count[0] - 1
+                if count[0] == 0:
+                    self.finalize(model)
+
+            for dep in deps:
+                add_lazy_relation(model, None, dep.rel.to, dependency_resolved)
+        else:
+            self.finalize(model)
+
+    def finalize(self, model):
+        # The HistoricalRecords object will be discarded,
+        # so the signal handlers can't use weak references.
+        models.signals.post_save.connect(self.post_save, sender=model,
+                                         weak=False)
+        models.signals.post_delete.connect(self.post_delete, sender=model,
+                                           weak=False)
+
+        history_model = self.create_history_model(model)
+        descriptor = manager.HistoryDescriptor(history_model)
+        setattr(model, self.manager_name, descriptor)
+        self.monkey_patch_name_map(model)
+
+        if self.add_history_properties:
+            self.monkey_patch_history_properties(model)
+
+        self.capture_save_method(model)
+        self.create_set_editor_method(model)
+
+        if model._meta in HistoricalRecords.REGISTRY:
+            AppCache().app_errors[model._meta] = 'Models cannot have more than one HistoricalRecords field.'
+        else:
+            regvalue = model, self.manager_name, history_model
+            HistoricalRecords.REGISTRY[model._meta] = regvalue
 
     def monkey_patch_history_properties(self, cls):
         '''
@@ -91,84 +130,46 @@ class HistoricalRecords(object):
         # at some point in time.
         >>> Bar.objects.filter(history__value__gt=9000)
         '''
-        if cls._meta.__class__ in self.PATCHED_META_CLASSES:
-            return
+        opts = cls._meta.__class__
+        original_init_name_map = opts.init_name_map
 
-        original_init_name_map = cls._meta.__class__.init_name_map
-        def init_name_map(meta):
+        @wraps(original_init_name_map)
+        def new_init_name_map(meta):
             original_map = original_init_name_map(meta)
-            updated_map = self.update_item_name_map(original_map, cls)
-
+            updated_map = self.update_item_name_map(original_map, meta)
             if original_map != updated_map and app_cache_ready():
                 meta._name_map = updated_map
                 return updated_map
-            
             return original_map
-        cls._meta.__class__.init_name_map = init_name_map
+
+        # this may be called multiple times - only patch once
+        if opts.init_name_map.func_code != new_init_name_map.func_code:
+            opts.init_name_map = new_init_name_map
+
+    def update_item_name_map(self, map, meta):
+        if meta not in HistoricalRecords.REGISTRY:
+            return map
+
+        # item is registered as a history item, see if it needs to
+        # update the item name map
+        model, mgr, hmodel = HistoricalRecords.REGISTRY.get(meta)
+
+        # inject additional lookup into item name map        
+        history_fk = models.ForeignKey(model)
+        history_fk.column = meta.pk.get_attname()
+        history_fk.model = hmodel
+        rel = RelatedObject(model, hmodel, history_fk)
         
-        # keep track of the fact that we patched this so we don't patch
-        # it multiple times
-        self.PATCHED_META_CLASSES[cls._meta.__class__] = True
-
-    def update_item_name_map(self, map, cls):
-
-        # inject additional lookup into item name map
-        history_model = getattr(cls, self.manager_name).model
-        history_fk = models.ForeignKey(cls)
-        history_fk.column = cls._meta.pk.get_attname()
-        history_fk.model = history_model
-        rel = RelatedObject(cls, history_model, history_fk)
-
         m = dict(map)
-        m[self.manager_name] = (rel, None, False, False)
+        m[mgr] = (rel, None, False, False)
         return m
-
-    def get_field_dependencies(self, model):
-        deps = []
-        for field in model._meta.fields: 
-            if isinstance(field, models.ForeignKey):
-                deps.append(field)
-        return deps
-
-    def finalize(self, sender, **kwargs):
         
-        # The HistoricalRecords object will be discarded,
-        # so the signal handlers can't use weak references.
-        models.signals.post_save.connect(self.post_save, sender=sender,
-                                         weak=False)
-        models.signals.post_delete.connect(self.post_delete, sender=sender,
-                                           weak=False)
 
-        def _finalize():
-            history_model = self.create_history_model(sender)
-            descriptor = manager.HistoryDescriptor(history_model)
-            setattr(sender, self.manager_name, descriptor)
-            self.monkey_patch_name_map(sender)
-
-            if self.add_history_properties:
-                self.monkey_patch_history_properties(sender)
-
-            self.capture_save_method(sender)
-            self.create_set_editor_method(sender)
-
-        deps = self.get_field_dependencies(sender)
-        if deps:
-            count = [len(deps)] 
-            def dependency_resolved(*args):
-                count[0] = count[0] - 1
-                if count[0] == 0:
-                    _finalize()
-
-            for dep in deps:
-                add_lazy_relation(sender, None, dep.rel.to, dependency_resolved)
-        else:
-            _finalize()
-
-    def capture_save_method(self, sender):
+    def capture_save_method(self, model):
         """
         Replace 'save()' by 'save(editor=user)'
         """
-        original_save = sender.save
+        original_save = model.save
 
         @wraps(original_save)
         def new_save(self, *args, **kwargs):
@@ -176,21 +177,21 @@ class HistoricalRecords(object):
             self._history_editor = kwargs.pop('editor', getattr(self, '_history_editor', None))
             original_save(self, *args, **kwargs)
 
-        sender.save = new_save
+        model.save = new_save
 
-    def create_set_editor_method(self, sender):
+    def create_set_editor_method(self, model):
         """
         Add a set_editor method to the model which has a history.
         """
-        if hasattr(sender, 'set_editor'):
-            raise Exception('historicalrecords cannot add method set_editor to %s' % sender.__class__.__name__)
+        if hasattr(model, 'set_editor'):
+            raise Exception('historicalrecords cannot add method set_editor to %s' % model.__class__.__name__)
 
         def set_editor(self, editor):
             """
             Set the editor (User object) to be used in the historicalrecord during the next save() call.
             """
             self._history_editor = editor
-        sender.set_editor = set_editor
+        model.set_editor = set_editor
 
     def create_history_model(self, model):
         """
@@ -219,7 +220,6 @@ class HistoricalRecords(object):
 
                 # Copy attributes from base class
                 attrs.update(self.copy_fields(model))
-                attrs.update(Meta=type('Meta', (), self.get_meta_options(model)))
 
                 return ModelBase.__new__(c, name, bases, attrs)
 
@@ -228,6 +228,10 @@ class HistoricalRecords(object):
             History entry
             """
             __metaclass__ = HistoryEntryMeta
+
+            class Meta:
+                ordering = ['-history_id']
+                get_latest_by = 'history_id'
 
             history_id = models.AutoField(primary_key=True)
             history_date = models.DateTimeField(default=datetime.datetime.now,
@@ -275,10 +279,18 @@ class HistoricalRecords(object):
 
         return HistoryEntry
 
+    def get_field_dependencies(self, model):
+        deps = []
+        for field in model._meta.fields: 
+            if isinstance(field, models.ForeignKey):
+                deps.append(field)
+        return deps
+
     def get_important_fields(self, model):
         """ Return the list of fields that we care about.  """
         for f in model._meta.fields:
-            if f.name == 'id' or not self._fields or f.name in self._fields:
+            #import pdb; pdb.set_trace();
+            if f == model._meta.pk or not self._fields or f.name in self._fields:
                 yield f
 
     def get_important_field_names(self, model):
@@ -342,15 +354,6 @@ class HistoricalRecords(object):
 
         return fields
 
-    def get_meta_options(self, model):
-        """
-        Returns a dictionary of fields that will be added to
-        the Meta inner class of the historical record model.
-        """
-        return {
-            'ordering': ('-history_id',),
-            'get_latest_by': 'history_id'
-        }
 
     def post_save(self, instance, created, **kwargs):
         """
@@ -361,7 +364,7 @@ class HistoricalRecords(object):
         # Decide whether to save a history copy: only when certain fields were changed.
         save = True
         try:
-            most_recent = instance.history.most_recent()
+            most_recent = getattr(instance, self.manager_name).most_recent()
             save = False
             for field in self.get_important_field_names(instance):
                 if getattr(instance, field) != getattr(most_recent, field):
