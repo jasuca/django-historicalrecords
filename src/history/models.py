@@ -94,6 +94,7 @@ class HistoricalRecords(object):
             self.monkey_patch_history_properties(model)
 
         self.capture_save_method(model)
+        self.capture_init(model)
         self.create_set_editor_method(model)
 
         if model._meta in HistoricalRecords.REGISTRY:
@@ -163,7 +164,6 @@ class HistoricalRecords(object):
         m = dict(map)
         m[mgr] = (rel, None, False, False)
         return m
-        
 
     def capture_save_method(self, model):
         """
@@ -178,6 +178,20 @@ class HistoricalRecords(object):
             original_save(self, *args, **kwargs)
 
         model.save = new_save
+
+    def capture_init(self, model):
+        """
+        Allow editor kwarg in create()
+        """
+        original_init = model.__init__
+
+        @wraps(original_init)
+        def new_init(self, *args, **kwargs):
+            # Save editor in temporary variable, post_save will read this one
+            self._history_editor = kwargs.pop('editor', None)
+            original_init(self, *args, **kwargs)
+
+        model.__init__ = new_init
 
     def create_set_editor_method(self, model):
         """

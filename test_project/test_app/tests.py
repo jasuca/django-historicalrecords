@@ -192,6 +192,36 @@ class BasicHistoryTest(TestCase):
                                        .all().order_by('history_id')):
             self.assertEqual(hrec.history_editor, users[idx % len(users)])
 
+
+class InstancePropertyTest(TestCase):
+    def setUp(self):
+        self.creator = User.objects.create_user('proptester', 
+                                                'proptester@example.com', 
+                                                '!')
+        self.obj = models.VersionedModel.objects.create(
+                        characters='props test',
+                        editor=self.creator)
+    
+    def test_instance_properties(self):
+        
+        second_editor = User.objects.create_user(
+                                'secondtester', 
+                                'secondtester@example.com', 
+                                '!')
+        final_editor = User.objects.create_user(
+                                'finaltester', 
+                                'finaltester@example.com', 
+                                '!')
+        self.obj.integer = 2
+        self.obj.save(editor=second_editor)
+
+        self.obj.integer = 3
+        self.obj.save(editor=final_editor)
+
+        self.assertTrue(self.obj.history.created_date < self.obj.history.last_modified_date)
+        self.assertEqual(self.obj.history.created_by, self.creator)
+        self.assertEqual(self.obj.history.last_modified_by, final_editor)
+
 @unittest.skip("Inherited classes aren't supported yet")
 class InheritedFkTest(BasicHistoryTest):
     def setUp(self):

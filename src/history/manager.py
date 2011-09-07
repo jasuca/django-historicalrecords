@@ -97,12 +97,26 @@ class HistoryManager(models.Manager):
         return self.aggregate(created=models.Min('history_date'))['created']
 
     @property
+    def created_by(self):
+        if not self.instance:
+            raise TypeError("Can't use created_by() without a %s instance." % \
+                                self.primary_model._meta.object_name)
+        return self.order_by('history_date')[0].history_editor
+
+    @property
     def last_modified_date(self):
         if not self.instance:
             raise TypeError("Can't use last_modified_date() without a %s instance." % \
                                 self.primary_model._meta.object_name)
 
         return self.aggregate(modified=models.Max('history_date'))['modified']
+
+    @property
+    def last_modified_by(self):
+        if not self.instance:
+            raise TypeError("Can't use last_modified_by() without a %s instance." % \
+                                self.primary_model._meta.object_name)
+        return self.order_by('-history_date')[0].history_editor
 
     def get_or_restore(self, pk):
         '''
