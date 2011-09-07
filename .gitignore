@@ -1,5 +1,6 @@
 *.pyc
 *.db
+*.swp
 ve/
 build/
 pip-log.txt
