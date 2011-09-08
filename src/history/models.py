@@ -94,6 +94,7 @@ class HistoricalRecords(object):
             self.monkey_patch_history_properties(model)
 
         self.capture_save_method(model)
+        self.capture_delete_method(model)
         self.capture_init(model)
         self.create_set_editor_method(model)
 
@@ -115,6 +116,12 @@ class HistoricalRecords(object):
         last_modified_date = lambda m: getattr(m, self.manager_name).last_modified_date
         cls.last_modified_date = property(last_modified_date)
 
+        created_by = lambda m: getattr(m, self.manager_name).created_by
+        cls.created_by = property(created_by)
+
+        last_modified_by = lambda m: getattr(m, self.manager_name).last_modified_by
+        cls.last_modified_by = property(last_modified_by)
+        
     def monkey_patch_name_map(self, cls):
         '''
         Replace init_name_map() with a custom implementation, allowing us to
@@ -178,6 +185,20 @@ class HistoricalRecords(object):
             original_save(self, *args, **kwargs)
 
         model.save = new_save
+
+    def capture_delete_method(self, model):
+        """
+        Replace 'delete()' by 'delete(editor=user)'
+        """
+        original_delete = model.delete
+
+        @wraps(original_delete)
+        def new_delete(self, *args, **kwargs):
+            # Save editor in temporary variable, post_delete will read this one
+            self._history_editor = kwargs.pop('editor', getattr(self, '_history_editor', None))
+            original_delete(self, *args, **kwargs)
+
+        model.delete = new_delete
 
     def capture_init(self, model):
         """
@@ -392,7 +413,7 @@ class HistoricalRecords(object):
 
     def post_delete(self, instance, **kwargs):
         try:
-            self.create_historical_record(instance, None, '-')
+            self.create_historical_record(instance, instance._history_editor, '-')
         except HistoricalIntegrityError:
             pass
 
@@ -429,7 +450,7 @@ class HistoricalObjectDescriptor(object):
 
     def __get__(self, instance, owner):
         values = dict( (f, getattr(instance, f)) for f in 
-                       self.history_model.important_fields )
+                       self.history_model.important_field_names )
         return self.history_model.primary_model(**values)
 
 class HistoricalIntegrityError(django.db.IntegrityError):

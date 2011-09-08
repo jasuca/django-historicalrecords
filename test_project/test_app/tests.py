@@ -191,7 +191,37 @@ class BasicHistoryTest(TestCase):
         for idx, hrec in enumerate(getattr(m, self.history_manager)\
                                        .all().order_by('history_id')):
             self.assertEqual(hrec.history_editor, users[idx % len(users)])
+    
+    def test_deletion(self):
+        u = User.objects.create_user('test', 'test@example.com', 'test')
+        m = self.model.objects.create(editor=u)
+        m_pk = m.pk
+        m.delete(editor=u)
 
+        last = getattr(self.model, self.history_manager)\
+                .filter(**{self.model._meta.pk.name: m_pk})\
+                .order_by('-history_date')[0]
+        self.assertEqual(last.history_type, '-') 
+        self.assertEqual(last.history_editor, u) 
+
+    def test_retrieval(self):
+        m = self.model.objects.create(characters='original')
+        m.characters = 'updated'
+        m.save()
+
+        history = getattr(m, self.history_manager)
+        m_orig = history.as_of(history.created_date)
+        self.assertEqual(m_orig.__class__, self.model)
+        self.assertEqual(m_orig.characters, 'original')
+        self.assertEqual(history.most_recent().characters, 'updated')
+
+        # ensure that we can get at a value in multiple ways and that each method's
+        # results are in agreement
+        m_current = history.as_of(history.last_modified_date)
+        m_current_prime = history.get(history_date=history.last_modified_date)\
+                .history_object
+        self.assertEqual(m_current.characters, m_current_prime.characters)
+    
 
 class InstancePropertyTest(TestCase):
     def setUp(self):

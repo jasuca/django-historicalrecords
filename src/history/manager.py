@@ -42,15 +42,14 @@ class HistoryManager(models.Manager):
         pk = self.instance.pk if self.instance else pk
         qs = self._filter_queryset_by_pk(self.get_query_set(), pk)
 
-        fields = self.model.important_field_names
         try:
-            values = qs.values_list(*fields)[0]
+            version = qs[0]
         except IndexError:
             message = "%s(pk=%s) has no historical record." % \
                 (self.primary_model.__name__, pk)
             raise self.primary_model.DoesNotExist(message)
         else:
-            return self.primary_model(pk=pk, *values)
+            return version.history_object
 
     def as_of(self, date, pk=None, restore=False):
         """
@@ -71,23 +70,18 @@ class HistoryManager(models.Manager):
         pk = self.instance.pk if self.instance else pk
         qs = self._filter_queryset_by_pk(self.get_query_set(), pk)
 
-        fields = self.model.important_field_names
-        qs = qs
         try:
-            values = qs\
-                .filter(history_date__lte=date)\
-                .values_list('history_type', *fields)[0]
+            version = qs.filter(history_date__lte=date)[0]
         except IndexError:
             message = "%s(pk=%s) had not yet been created." % \
                 (self.primary_model.__name__, pk)
             raise self.primary_model.DoesNotExist(message)
         else:
-            if values[0] == '-' and not restore:
+            if version.history_type == '-' and not restore:
                 message = "%s(pk=%s) had already been deleted." % \
                     (self.primary_model.__name__, pk)
                 raise self.primary_model.DoesNotExist(message)
-
-            return self.primary_model(pk=pk, *values[1:])
+            return version.history_object 
 
     @property
     def created_date(self):
