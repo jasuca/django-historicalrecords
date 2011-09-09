@@ -98,6 +98,9 @@ class DateFieldTestModel(BaseModel):
     auto_now_datetime = models.DateTimeField(auto_now=True)
     auto_now_add_datetime = models.DateTimeField(auto_now_add=True)
 
+class EditorRequiredTestModel(BaseModel):
+    history = HistoricalRecords(require_editor=True)
+
 #-------------------------------------------------------------------------------
 # Test models for abstract foreign key bases
 # (see https://docs.djangoproject.com/en/dev/topics/db/models/#abstract-related-name)

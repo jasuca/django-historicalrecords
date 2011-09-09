@@ -49,11 +49,13 @@ class HistoricalRecords(object):
                  module=None,
                  fields=None,
                  key_conversions=None,
-                 add_history_properties=False):
+                 add_history_properties=False,
+                 require_editor=False):
         self._module = module
         self._fields = fields
         self.key_conversions = key_conversions or {}
         self.add_history_properties = add_history_properties
+        self.require_editor = require_editor
 
     def contribute_to_class(self, cls, name):
         self.manager_name = name
@@ -177,11 +179,14 @@ class HistoricalRecords(object):
         Replace 'save()' by 'save(editor=user)'
         """
         original_save = model.save
-
+        require_editor = self.require_editor
+        
         @wraps(original_save)
         def new_save(self, *args, **kwargs):
             # Save editor in temporary variable, post_save will read this one
             self._history_editor = kwargs.pop('editor', getattr(self, '_history_editor', None))
+            if require_editor and not self._history_editor:
+                raise ValueError('Editor field is required')
             original_save(self, *args, **kwargs)
 
         model.save = new_save
@@ -191,11 +196,14 @@ class HistoricalRecords(object):
         Replace 'delete()' by 'delete(editor=user)'
         """
         original_delete = model.delete
+        require_editor = self.require_editor
 
         @wraps(original_delete)
         def new_delete(self, *args, **kwargs):
             # Save editor in temporary variable, post_delete will read this one
             self._history_editor = kwargs.pop('editor', getattr(self, '_history_editor', None))
+            if require_editor and not self._history_editor:
+                raise ValueError('Editor field is required')
             original_delete(self, *args, **kwargs)
 
         model.delete = new_delete

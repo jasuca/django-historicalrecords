@@ -269,6 +269,38 @@ class RenamedHistoryFieldTest(BasicHistoryTest):
         self.history_manager = 'othername'
         super(RenamedHistoryFieldTest, self).setUp()
 
+class EditorRequiredTest(TestCase):
+    def testRequireEditor(self):
+        u = User.objects.create_user('test', 'test@example.com', '?')
+
+        with self.assertRaises(ValueError):
+            m = models.EditorRequiredTestModel.objects.create()
+        m = models.EditorRequiredTestModel.objects.create(editor=u)
+
+        with self.assertRaises(ValueError):
+            m = models.EditorRequiredTestModel()
+            m.save()
+        m = models.EditorRequiredTestModel()
+        m.save(editor=u)
+        
+        # These assertions represents a more restrictive view of editing where
+        # a model instance 'forgets' its editor upon create() and save().  For now,
+        # we'll retain the editor while the instance is still around.
+        #with self.assertRaises(ValueError):
+        #    m = models.EditorRequiredTestModel.objects.create(editor=u)
+        #    m.characters = 'foo'
+        #    m.save()
+        #with self.assertRaises(ValueError):
+        #    m = models.EditorRequiredTestModel.objects.create(editor=u)
+        #    m.delete()
+
+        m = models.EditorRequiredTestModel.objects.create(editor=u)
+        m.characters = 'foo'
+        m.save(editor=u)
+
+        m = models.EditorRequiredTestModel.objects.create(editor=u)
+        m.delete(editor=u)
+            
 class FkTestCase(TestCase):
     def setUp(self):
         self.nv = models.NonversionedModel.objects\
@@ -294,6 +326,8 @@ class PreservedForeignKeyTest(FkTestCase):
 
     def test_related_reference(self):
         '''
+
+
         Assert that the preserved foreign key fields are available by reference
         bidirectionally:
         - One related primary item
