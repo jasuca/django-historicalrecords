@@ -16,6 +16,15 @@ from history import manager
 PRESERVE = 1
 CONVERT = 2
 
+CREATED = '+'
+MODIFIED = '~'
+DELETED = '-'
+HISTORY_TYPES = (
+    (CREATED, 'Created'),
+    (MODIFIED, 'Modified'),
+    (DELETED, 'Deleted')
+)
+
 class HistoryChange(object):
     def __init__(self, name, from_value, to_value, verbose_name):
         self.name = name
@@ -279,11 +288,7 @@ class HistoricalRecords(object):
             history_id = models.AutoField(primary_key=True)
             history_date = models.DateTimeField(default=datetime.datetime.now,
                                                 db_index=True)
-            history_type = models.CharField(max_length=1, choices=(
-                    ('+', 'Created'),
-                    ('~', 'Changed'),
-                    ('-', 'Deleted'),
-                ))
+            history_type = models.CharField(max_length=1, choices=HISTORY_TYPES)
             history_editor = models.ForeignKey(User, null=True, blank=True, 
                                                related_name=rel_nm_user)
             primary_model = model            
@@ -417,11 +422,11 @@ class HistoricalRecords(object):
 
         # Create historical record
         if save:
-            self.create_historical_record(instance, instance._history_editor, created and '+' or '~')
+            self.create_historical_record(instance, instance._history_editor, created and CREATED or MODIFIED)
 
     def post_delete(self, instance, **kwargs):
         try:
-            self.create_historical_record(instance, instance._history_editor, '-')
+            self.create_historical_record(instance, instance._history_editor, DELETED)
         except HistoricalIntegrityError:
             pass
 

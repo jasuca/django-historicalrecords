@@ -10,6 +10,7 @@ from django.contrib.auth.models import User
 from django.db.models import Sum, Min, Max, Count
 from django.utils import unittest
 from django.test import TransactionTestCase as TestCase
+from history.models import CREATED, MODIFIED, DELETED
 
 from test_app import models
 
@@ -201,7 +202,7 @@ class BasicHistoryTest(TestCase):
         last = getattr(self.model, self.history_manager)\
                 .filter(**{self.model._meta.pk.name: m_pk})\
                 .order_by('-history_date')[0]
-        self.assertEqual(last.history_type, '-') 
+        self.assertEqual(last.history_type, DELETED) 
         self.assertEqual(last.history_editor, u) 
 
     def test_retrieval(self):

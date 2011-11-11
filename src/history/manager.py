@@ -77,7 +77,8 @@ class HistoryManager(models.Manager):
                 (self.primary_model.__name__, pk)
             raise self.primary_model.DoesNotExist(message)
         else:
-            if version.history_type == '-' and not restore:
+            from history.models import DELETED
+            if version.history_type == DELETED and not restore:
                 message = "%s(pk=%s) had already been deleted." % \
                     (self.primary_model.__name__, pk)
                 raise self.primary_model.DoesNotExist(message)
