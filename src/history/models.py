@@ -1,5 +1,4 @@
 import copy
-import datetime
 from functools import wraps
 
 from django.contrib.auth.models import User
@@ -289,7 +288,7 @@ class HistoricalRecords(object):
                 get_latest_by = 'history_id'
 
             history_id = models.AutoField(primary_key=True)
-            history_date = models.DateTimeField(default=datetime.datetime.now,
+            history_date = models.DateTimeField(auto_now_add=True,
                                                 db_index=True)
             history_type = models.CharField(max_length=1, choices=HISTORY_TYPES)
             history_editor = models.ForeignKey(User, null=True, blank=True,
