@@ -355,6 +355,7 @@ class HistoricalRecords(object):
         fields = {}
         for field in self.get_important_fields(model):
             field = copy.copy(field)
+            field_name = field.name
 
             # Deal with foreign keys, optionally according to a configured
             # behavior scheme.
@@ -399,8 +400,13 @@ class HistoricalRecords(object):
                 field.db_index = True
 
             # TODO: one-to-one field
+            if isinstance(field, models.OneToOneField):
+                # OneToOne relations in the model should be converted to
+                # ForeignKeys as it is now possible that it is no longer
+                # unique.
+                field = models.ForeignKey(to=field.rel.to, related_name="+", null=True, blank=True)
 
-            fields[field.name] = field
+            fields[field_name] = field
 
         return fields
 
