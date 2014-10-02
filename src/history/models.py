@@ -333,7 +333,11 @@ class HistoricalRecords(object):
         deps = []
         for field in model._meta.fields:
             if isinstance(field, models.ForeignKey):
-                deps.append(field)
+                if hasattr(field, 'from_fields') and 'self' in field.from_fields:
+                    # (todo): Self foreign key do sth
+                    pass
+                else:
+                    deps.append(field)
         return deps
 
     def get_important_fields(self, model):
